@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const User = require('./models/User');
+const connectDB = require('./config/db');
 
 const authRoutes = require('./routes/auth');
 const donationRoutes = require('./routes/donations');
@@ -19,149 +20,62 @@ const paymentRoutes = require('./routes/payment');
 const app = express();
 
 app.use(cors({
-    origin: ['https://ngo-website-seven-livid.vercel.app', 'http://localhost:5173', 'http://localhost:5174'],
+    origin: ['https://ngo-website-seven-livid.vercel.app', 'http://localhost:5173'],
     credentials: true
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-}
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 
 const certsDir = path.join(__dirname, 'certificates');
-if (!fs.existsSync(certsDir)) {
-    fs.mkdirSync(certsDir, { recursive: true });
-}
+if (!fs.existsSync(certsDir)) fs.mkdirSync(certsDir, { recursive: true });
 app.use('/certificates', express.static(certsDir));
 
-const seedAdmin = async () => {
+app.use('/api/auth', authRoutes);
+app.use('/api/donations', donationRoutes);
+app.use('/api/certificates', certificateRoutes);
+app.use('/api/programs', programRoutes);
+app.use('/api/blogs', blogRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/upload', uploadRoutes);
+app.use('/api/payment', paymentRoutes);
+
+app.get('/api/health', (req, res) => {
+    res.json({ 
+        status: 'ok',
+        message: 'Hope Foundation API Running',
+        db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    });
+});
+
+app.get('/api/seed', async (req, res) => {
     try {
         const existingAdmin = await User.findOne({ role: 'admin' });
         if (!existingAdmin) {
             const hashedPassword = await bcrypt.hash('admin123', 10);
-            const admin = new User({
+            await User.create({
                 name: 'Admin',
                 email: 'admin@hopefoundation.org',
                 password: hashedPassword,
                 role: 'admin'
             });
-            await admin.save();
-            console.log('✓ Admin user created: admin@hopefoundation.org / admin123');
+            res.json({ message: 'Admin created', email: 'admin@hopefoundation.org', password: 'admin123' });
         } else {
-            console.log('✓ Admin user already exists');
+            res.json({ message: 'Admin already exists' });
         }
     } catch (error) {
-        console.log('✗ Error creating admin:', error.message);
+        res.status(500).json({ error: error.message });
     }
-};
-
-mongoose.connection.on('connected', () => {
-    console.log('MongoDB connection established');
 });
 
-mongoose.connection.on('error', (err) => {
-    console.error('MongoDB connection error:', err);
-});
-
-mongoose.connection.on('disconnected', () => {
-    console.log('MongoDB disconnected');
-});
-
-const connectDB = async () => {
-    try {
-        if (!process.env.MONGODB_URI) {
-            console.error('✗ MONGODB_URI not found in .env file');
-            process.exit(1);
-        }
-
-        console.log('Connecting to MongoDB...');
-        
-        const isAtlas = process.env.MONGODB_URI.includes('mongodb+srv');
-        let connectionUri = process.env.MONGODB_URI;
-        
-        if (isAtlas && process.env.MONGODB_DIRECT_URI) {
-            connectionUri = process.env.MONGODB_DIRECT_URI;
-            console.log('Using direct connection string...');
-        }
-        
-        await mongoose.connect(connectionUri, {
-            serverSelectionTimeoutMS: 20000,
-            socketTimeoutMS: 60000,
-            maxPoolSize: 10,
-            minPoolSize: 2,
-            ...(isAtlas && {
-                tls: true,
-                tlsAllowInvalidCertificates: true,
-                tlsAllowInvalidHostnames: true,
-                family: 4,
-            }),
-        });
-
-        console.log(`✓ MongoDB Connected ${isAtlas ? 'to Atlas' : 'to Localhost'}`);
-        
-    } catch (err) {
-        console.error('✗ MongoDB Connection Failed:', err.message);
-        console.log('Retrying in 5 seconds...');
-        setTimeout(connectDB, 5000);
-    }
-};
+const PORT = process.env.PORT || 8000;
 
 const startServer = async () => {
     await connectDB();
-    await seedAdmin();
-
-    app.use('/api/auth', authRoutes);
-    app.use('/api/donations', donationRoutes);
-    app.use('/api/certificates', certificateRoutes);
-    app.use('/api/programs', programRoutes);
-    app.use('/api/blogs', blogRoutes);
-    app.use('/api/admin', adminRoutes);
-    app.use('/api/upload', uploadRoutes);
-    app.use('/api/payment', paymentRoutes);
-
-    app.get('/api/health', (req, res) => {
-        const dbState = mongoose.connection.readyState;
-        const stateMap = {
-            0: 'disconnected',
-            1: 'connected',
-            2: 'connecting',
-            3: 'disconnecting'
-        };
-        
-        res.json({ 
-            status: dbState === 1 ? 'ok' : 'degraded', 
-            message: 'Hope Foundation API Running',
-            database: stateMap[dbState] || 'unknown'
-        });
-    });
-
-    app.get('/api/seed', async (req, res) => {
-        try {
-            await seedAdmin();
-            res.json({ message: 'Admin seeded successfully', email: 'admin@hopefoundation.org', password: 'admin123' });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    });
-
-    app.use((err, req, res, next) => {
-        console.error(err.stack);
-        res.status(500).json({ error: 'Something went wrong!', message: err.message });
-    });
-
-    const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => {
-        console.log(`✓ Server running on port ${PORT}`);
-    });
+    app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 };
-
-process.on('SIGINT', async () => {
-    console.log('Shutting down gracefully...');
-    await mongoose.connection.close();
-    process.exit(0);
-});
 
 startServer();
