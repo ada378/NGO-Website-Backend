@@ -58,44 +58,110 @@ const seedAdmin = async () => {
     }
 };
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/hope_foundation', {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-})
-.then(async () => {
-    console.log('MongoDB Connected');
-    await seedAdmin();
-})
-.catch(err => console.log('MongoDB Error:', err));
-
-app.use('/api/auth', authRoutes);
-app.use('/api/donations', donationRoutes);
-app.use('/api/certificates', certificateRoutes);
-app.use('/api/programs', programRoutes);
-app.use('/api/blogs', blogRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/upload', uploadRoutes);
-app.use('/api/payment', paymentRoutes);
-
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', message: 'Hope Foundation API Running' });
+mongoose.connection.on('connected', () => {
+    console.log('MongoDB connection established');
 });
 
-app.get('/api/seed', async (req, res) => {
+mongoose.connection.on('error', (err) => {
+    console.error('MongoDB connection error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+    console.log('MongoDB disconnected');
+});
+
+const connectDB = async () => {
     try {
-        await seedAdmin();
-        res.json({ message: 'Admin seeded successfully', email: 'admin@hopefoundation.org', password: 'admin123' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+        if (!process.env.MONGODB_URI) {
+            console.error('✗ MONGODB_URI not found in .env file');
+            process.exit(1);
+        }
+
+        console.log('Connecting to MongoDB...');
+        
+        const isAtlas = process.env.MONGODB_URI.includes('mongodb+srv');
+        let connectionUri = process.env.MONGODB_URI;
+        
+        if (isAtlas && process.env.MONGODB_DIRECT_URI) {
+            connectionUri = process.env.MONGODB_DIRECT_URI;
+            console.log('Using direct connection string...');
+        }
+        
+        await mongoose.connect(connectionUri, {
+            serverSelectionTimeoutMS: 20000,
+            socketTimeoutMS: 60000,
+            maxPoolSize: 10,
+            minPoolSize: 2,
+            ...(isAtlas && {
+                tls: true,
+                tlsAllowInvalidCertificates: true,
+                tlsAllowInvalidHostnames: true,
+                family: 4,
+            }),
+        });
+
+        console.log(`✓ MongoDB Connected ${isAtlas ? 'to Atlas' : 'to Localhost'}`);
+        
+    } catch (err) {
+        console.error('✗ MongoDB Connection Failed:', err.message);
+        console.log('Retrying in 5 seconds...');
+        setTimeout(connectDB, 5000);
     }
+};
+
+const startServer = async () => {
+    await connectDB();
+    await seedAdmin();
+
+    app.use('/api/auth', authRoutes);
+    app.use('/api/donations', donationRoutes);
+    app.use('/api/certificates', certificateRoutes);
+    app.use('/api/programs', programRoutes);
+    app.use('/api/blogs', blogRoutes);
+    app.use('/api/admin', adminRoutes);
+    app.use('/api/upload', uploadRoutes);
+    app.use('/api/payment', paymentRoutes);
+
+    app.get('/api/health', (req, res) => {
+        const dbState = mongoose.connection.readyState;
+        const stateMap = {
+            0: 'disconnected',
+            1: 'connected',
+            2: 'connecting',
+            3: 'disconnecting'
+        };
+        
+        res.json({ 
+            status: dbState === 1 ? 'ok' : 'degraded', 
+            message: 'Hope Foundation API Running',
+            database: stateMap[dbState] || 'unknown'
+        });
+    });
+
+    app.get('/api/seed', async (req, res) => {
+        try {
+            await seedAdmin();
+            res.json({ message: 'Admin seeded successfully', email: 'admin@hopefoundation.org', password: 'admin123' });
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    app.use((err, req, res, next) => {
+        console.error(err.stack);
+        res.status(500).json({ error: 'Something went wrong!', message: err.message });
+    });
+
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () => {
+        console.log(`✓ Server running on port ${PORT}`);
+    });
+};
+
+process.on('SIGINT', async () => {
+    console.log('Shutting down gracefully...');
+    await mongoose.connection.close();
+    process.exit(0);
 });
 
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ error: 'Something went wrong!', message: err.message });
-});
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+startServer();
