@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const User = require('./models/User');
+const Program = require('./models/Program');
 const connectDB = require('./config/db');
 
 const authRoutes = require('./routes/auth');
@@ -51,21 +52,71 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+const seedPrograms = async () => {
+    const programs = [
+        {
+            title: 'Education for All',
+            slug: 'education-for-all',
+            description: 'Providing quality education to underprivileged children across India. We believe every child deserves access to learning opportunities that can transform their future.',
+            category: 'Education',
+            impactStats: { livesImpacted: 15000, projectsCompleted: 45, volunteers: 500 },
+            goals: { target: 5000000, raised: 3200000 },
+            features: ['Free schooling for underprivileged children', 'Scholarship programs for bright students', 'Digital classrooms with modern technology', 'Teacher training and development', 'After-school support programs', 'Career counseling services'],
+            status: 'active'
+        },
+        {
+            title: 'Healthcare Mission',
+            slug: 'healthcare-mission',
+            description: 'Extending quality healthcare services to rural and underserved communities. We organize medical camps, provide medicines, and support critical surgeries.',
+            category: 'Healthcare',
+            impactStats: { livesImpacted: 25000, projectsCompleted: 60, volunteers: 350 },
+            goals: { target: 8000000, raised: 5800000 },
+            features: ['Free medical camps in rural areas', 'Emergency healthcare support', 'Mobile health clinics', 'Health awareness programs', 'Maternal and child healthcare', 'Free medicines distribution'],
+            status: 'active'
+        },
+        {
+            title: 'Women Empowerment',
+            slug: 'women-empowerment',
+            description: 'Empowering women through skill development and entrepreneurship support. We help women become self-reliant and economically independent.',
+            category: 'Women Empowerment',
+            impactStats: { livesImpacted: 8000, projectsCompleted: 30, volunteers: 200 },
+            goals: { target: 3000000, raised: 2100000 },
+            features: ['Skill development training', 'Microfinance support', 'Self-help groups', 'Entrepreneurship programs', 'Legal awareness', 'Leadership development'],
+            status: 'active'
+        },
+        {
+            title: 'Green Earth Initiative',
+            slug: 'green-earth-initiative',
+            description: 'Environmental conservation through tree plantation and sustainable practices. We work towards a greener and cleaner future for coming generations.',
+            category: 'Environment',
+            impactStats: { livesImpacted: 50000, projectsCompleted: 25, volunteers: 1000 },
+            goals: { target: 2000000, raised: 1500000 },
+            features: ['Tree plantation drives', 'Solar energy adoption', 'Waste management programs', 'River cleaning initiatives', 'Awareness campaigns', 'Community gardens'],
+            status: 'active'
+        }
+    ];
+
+    for (const program of programs) {
+        await Program.findOneAndUpdate({ slug: program.slug }, program, { upsert: true, new: true });
+    }
+    console.log('✅ Programs seeded');
+};
+
 app.get('/api/seed', async (req, res) => {
     try {
-        const existingAdmin = await User.findOne({ role: 'admin' });
-        if (!existingAdmin) {
-            const hashedPassword = await bcrypt.hash('admin123', 10);
-            await User.create({
-                name: 'Admin',
-                email: 'admin@hopefoundation.org',
-                password: hashedPassword,
-                role: 'admin'
-            });
-            res.json({ message: 'Admin created', email: 'admin@hopefoundation.org', password: 'admin123' });
-        } else {
-            res.json({ message: 'Admin already exists' });
-        }
+        const result = { messages: [] };
+        
+        const hashedPassword = await bcrypt.hash('admin123', 10);
+        const admin = await User.findOneAndUpdate(
+            { role: 'admin' },
+            { name: 'Admin', email: 'admin@hopefoundation.org', password: hashedPassword, role: 'admin' },
+            { upsert: true, new: true }
+        );
+        result.messages.push('Admin: admin@hopefoundation.org / admin123');
+
+        await seedPrograms();
+        
+        res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
